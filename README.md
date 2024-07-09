@@ -46,17 +46,6 @@ This project attempts to identify a method to simulate recruitment in the Sitka 
 herring unfished biomass simulations performed in `estimate_B0`. See appendix d
 of **final paper goes here** for a writeup of this analysis.
 
-### `revised_analysis`
-
-This project recreates ADF&G's original analysis estimated Sitka Sound unfished
-biomass in R. 
-
-### `sta_analysis`
-
-This project recreates an analysis performed by the Sitka Tribe of Alaska and submitted
-to the Alaska Board of Fisheries public comments. See the report at 
-`documentation/sta_analysis_methods_critique.pdf` for results and a critique of 
-methods.
 
 ## To run Sitka Sound unfished biomass calculation
 

@@ -1,0 +1,39 @@
+# R project and metadata files
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+*.Rdata
+
+# quarto project and cache files
+/.quarto/
+*_cache/
+*_files/
+
+# vscode workspace
+*.code-workspace
+
+# MS office docs (except the word template file)
+*.docx
+!wordtemplate.docx 
+
+# ignore all image files in a plots subdirectory
+*/plots
+
+# ignore papers
+references/*
+
+# ignore presentation files
+recruitment_comparisons/amss_2024/*
+recruitment_comparisons/biometrics_presentation/*
+estimate_B0/managers_presentation/*
+
+# ignore huge text file with final results
+raw_results_many_simulations_asa2023.txt
+raw_results_many_simulations_asa2023_sensitivity.txt
+
+# deprecated/*
+
+# Windows thumbnail cache files
+Thumbs.db
