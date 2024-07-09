@@ -1,0 +1,10 @@
+citHeader("herringSim citation:")
+
+citEntry(
+  entry    = "unpublished",
+  title    = "herringSim",
+  author   = "CL Roberts",
+  year     = "2022",
+  note     = "Functions and data for simulating herring unfished biomass",
+  textVersion = paste("herringSim")
+)

@@ -1,0 +1,29 @@
+Package: herringSim
+Type: Package
+Title: Utility functions and documentation for Sitka herring threshold analysis
+Version: 0.2.0
+Author: CL Roberts
+Maintainer: CL Roberts <cl.roberts@alaska.gov>
+Description: This package contains utility functions and documentation for a Sitka 
+    herring threshold analysis. This analysis is to re-evaluate a management 
+    threshold for a herring stock in Sitka Sound, Alaska. The current threshold is 
+    set to 16,759 tons, or 25% of the simulated average unfished biomass as 
+    established in `Carlile (1998)`. Tools for simulating, plotting, and analyzing 
+    average unfished biomass in Sitka herring are given here. However, code and 
+    methodology is hopefully general enough to be applied to other stocks.
+License: GPL (>= 3)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+LazyData: true
+Imports: 
+    ggplot2,
+    reshape2,
+    RColorBrewer,
+    Rdpack,
+    shiny,
+    stats,
+    ggrepel,
+    stats4
+RdMacros: Rdpack
+RoxygenNote: 7.2.0
+

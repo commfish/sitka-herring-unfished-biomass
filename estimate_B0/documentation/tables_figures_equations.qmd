@@ -1,0 +1,465 @@
+---
+title: "Tables, Figures, and Equations"
+subtitle: "Threshold Analysis"
+format: 
+  docx: 
+    reference-doc: wordtemplate.docx
+echo: false
+warning: false
+fig-width: 7
+fig-height: 3.5
+knitr: 
+    opts_knit: 
+        root.dir: "../.."
+---
+
+
+```{r}
+#| label: packages
+
+library(ggplot2)
+library(herringSim)
+library(dplyr)
+library(flextable)
+library(officer)
+```
+
+```{r}
+#| label: data
+
+data("cols")
+
+recruit_year <- 1980:2022
+
+sr_tab <- data.frame(year = recruit_year,
+                 recruits = naa_asa2023_forecast[naa_asa2023_forecast$Year %in% (recruit_year),"age3"],
+                 spawners = rowSums(((naa_asa2023_forecast[,-1]*maturity_asa2023_forecast)-caa_asa2023_forecast[,-1]) * mean_wt_asa2023_forecast)[naa_asa2023_forecast$Year %in% (recruit_year)],
+                 threshold = c(rep(6000, 3), rep(7500, 14), rep(20000, 13), rep(25000, 13)))
+
+sr <- sr_asa2023_forecast |> 
+    filter(year %in% recruit_year) |>
+    mutate(threshold = c(rep(6000, 3), rep(7500, 14), rep(20000, 13), rep(25000, 13)))
+mean_wt <- mean_wt_asa2023_forecast |>
+    mutate(year = rownames(mean_wt_asa2023_forecast)) |>
+    filter(year >= 1980) |>
+    mutate(year = NULL) |>
+    colMeans()
+maturity <- maturity_asa2023_forecast |>
+    mutate(year = rownames(maturity_asa2023_forecast)) |>
+    filter(year >= 1980) |>
+    mutate(year = NULL) |>
+    colMeans()
+S <- S_asa2023_forecast |>
+    mutate(year = rownames(S_asa2023_forecast)) |>
+    filter(year >= 1980) |>
+    mutate(year = NULL) |> 
+    colMeans() |>
+    unique()
+final_year <- max(caa_asa2023_forecast$Year)
+```
+
+
+```{r}
+#| label: single-simulations
+#| cache: true
+
+strata <- readRDS("estimate_B0/data/final_strata.rda")$strata
+
+set.seed(123)
+B_three_strata <- B_sim_empirical(recruits = sr$recruits, spawners = sr$spawners,
+                           strata = strata, mean_wt = mean_wt, maturity = maturity,
+                           S = S, num_years = 30000, max_iters = 40000)
+B_one_strata <- B_sim_empirical(recruits = sr$recruits, spawners = sr$spawners,
+                           strata = NA, mean_wt = mean_wt, maturity = maturity,
+                           S = S, num_years = 30000, max_iters = 40000)
+
+rick <- lm(log(recruits/spawners) ~ spawners, data = sr)
+rick_mod <- function(B){
+  R <- B*exp(coef(rick)[1] + B*coef(rick)[2])
+  return(R)
+}
+B_rick <- B_sim_functional(recruits = sr$recruits, spawners = sr$spawners, mean_wt = mean_wt,
+                 maturity = maturity, S = S, model_type = "rick_mod", num_years = 30000, max_iters = 40000)
+
+bevholt <- fit_bevertonHolt(recruits = sr$recruits, 
+                            spawners = sr$spawners, 
+                            start = list(logalpha = 2, logbeta = 3, logsigma2 = 2), 
+                            errorStructure = "multiplicative")
+bevholt_mod <- bevholt$mod
+B_bevholt <- B_sim_functional(recruits = sr$recruits, spawners = sr$spawners, mean_wt = mean_wt,
+                 maturity = maturity, S = S, model_type = "bevholt_mod", num_years = 30000, max_iters = 40000)
+
+```
+
+```{r}
+#| label: simulation-results
+#| cache: true
+
+raw_results <- data.table::fread("estimate_B0/data/raw_results_many_simulations_asa2023.txt", header = TRUE)
+raw_results_post_convergence <- na.omit(raw_results)
+```
+
+```{r}
+#| label: simulation-results-sensitivity
+#| cache: true
+
+raw_results_sens <- data.table::fread("estimate_B0/data/raw_results_many_simulations_asa2023_sensitivity.txt", header = TRUE)
+
+raw_results_post_convergence_sens <- na.omit(raw_results_sens)
+```
+
+```{r}
+#| label: source-recruitment-forecast-analysis
+
+source("recruitment_comparisons/r-code/forecast_comparisons_analysis.r")
+```
+
+# simulation algorithm
+
+### Initialization
+
+---
+
+**Input:** mean weight-at-age ($W_a$), age-specific maturity ($\rho_a$), annual survival fraction ($S$), ASA-estimated recruits for 1980-2022 ($R_y, y \in [1980, \ 2022]$)
+
+**Output:** initialized numbers-at-age matrix ($N_t$)
+
+1. **Define** $N_{t,a}$ to be a $8 \times 6$ matrix 
+2. **For** $t \in [1,8]$
+   1. $N_{t,3}$ is sampled from $R_y$
+   2. **for** $a \in [4,8]$
+      1. **if** $N_{t-1,a-1}$ exists **then** $N_{t,a} = S \cdot N_{t-1,a-1}$
+   3. **if** $N_{t,8}$ exists **then** compute total spawning biomass; $B_t = \sum_{a=3}^{8+} \rho_a \cdot W_a \cdot N_{a,t}$
+3. **Return** $N_{t,a}$
+
+---
+
+### Simulation
+
+---
+
+**Input:** initialized numbers-at-age matrix ($N_t$), mean weight-at-age ($W_a$), annual survival fraction ($S$), age-specific maturity ($\rho_a$), stratified ASA-estimated recruits for 1980-2022 ($R_y^k, y \in [1980, \ 2022], k \in [1, \ 3]$), strata boundaries ($l_1, \ l_2$)
+
+**Output:** estimated average spawning biomass under no fishing pressure ($\hat{B}_0$)
+
+1. **Define** $t = 9$
+2. **Define** strata boundaries
+   - $l_1 = \frac{1}{2} \left( \min(R_y^1) + \max(R_y^2) \right)$
+   - $l_2 = \frac{1}{2} \left( \min(R_y^2) + \max(R_y^3) \right)$
+3. **While** convergence false, or true for fewer than 30000 years
+   1. Identify spawning biomass, $B_{t-3}$
+       - **if** $B_{t-3} < l_1$ **then** $N_{t,3}$ is sampled from $R_y^1$
+       - **if** $l_1 \leq B_{t-3} < l_2$ **then** $N_{t,3}$ is sampled from $R_y^2$
+       - **if** $l_2 \leq B_{t-3}$ **then** $N_{t,3}$ is sampled from $R_y^3$
+   2. Compute older age classes; $N_{t+1,a+1} = S \cdot N_{t,a}$
+   3. Compute total spawning biomass; $B_t = \sum_{a=3}^{8+} \rho_a \cdot W_a \cdot N_{t,a}$
+   4. check convergence of $\frac{1}{t} \sum_1^t B_t$
+       - **if** convergence true and $T_c$ undefined, **define** $T_c = t$ to be the convergence year
+       - **if** convergence true and $T_c$ defined, **do** nothing
+   5. t = t+1
+   6. end **while** when $t  = T_c + 30000$
+4. **Return** $\hat{B}_0 = \frac{1}{30000} \sum_{t=T_c+1}^{T_c+30000} B_t$
+
+---
+
+
+# rmsd
+
+$$RMSD_i\ =\ \sqrt{\frac{1}{n-1}\ \sum_{t=I_0}^{I_0+n} \left(B_{i,t}\ -\ \bar{B}_{i}\ \right)^2\ }$$
+
+
+
+
+# Tables
+
+```{r}
+#| label: tbl-sr
+#| tbl-cap: 2023-forecast parameter estimates.
+
+sr_tab[1:round(nrow(sr_tab)/2),] |> 
+    mutate(spawners = spawners*1.10231, year = as.character(year), threshold = as.character(threshold)) |>
+    relocate(year, spawners, recruits, threshold) |>
+    rename("Year" = year, "Spawning Biomass (tons)" = spawners, "Age-3 Recruits (millions)" = recruits,
+           "Harvest Threshold (tons)" = threshold) |>
+    flextable(cwidth = 1) |>
+    fontsize(size = 8) |>
+    colformat_double(digits = 0) |>
+    align(align = "center", part = "all")
+
+sr_tab[(1+round(nrow(sr_tab)/2)):nrow(sr_tab),] |> 
+    mutate(spawners = spawners*1.10231, year = as.character(year), threshold = as.character(threshold)) |>
+    relocate(year, spawners, recruits, threshold) |>
+    rename("Year" = year, "Spawning Biomass (tons)" = spawners, "Age-3 Recruits (millions)" = recruits,
+           "Harvest Threshold (tons)" = threshold) |>
+    flextable(cwidth = 1) |>
+    fontsize(size = 8) |>
+    colformat_double(digits = 0) |>
+    align(align = "center", part = "all")
+```
+
+
+```{r}
+#| label: tbl-waa-maa
+#| tbl-cap: Weight and maturity information
+
+data.frame(age = c(3:7, "8+"), mean_wt, maturity, S = rep(S, 6)) |>
+    flextable(cwidth = c(.5, 1, 1, 1)) |>
+    set_header_labels(age = "Age", mean_wt = "Mean Weight (g)", 
+                      maturity = "Maturity Proportion", S = "Annual Survival Fraction") |>
+    fontsize(size = 10) |>
+    colformat_double(j = 2, digits = 1) |>
+    colformat_double(j = 3:4, digits = 2) |>
+    align(align = "center", part = "all")
+```
+
+```{r}
+#| label: tbl-quantiles
+#| tbl-cap: Quantiles of simulation results
+
+quant_probs <- c(0, .005, .025, .25, .5, .75, .975, .995, 1)
+quants <- quantile(raw_results_post_convergence$B, 
+                   probs = quant_probs)
+
+data.frame("Quantile" = quant_probs, "B" = quants) |>
+    flextable(cwidth = c(1, 1, 1.5)) |>
+    fontsize(size = 10) |>
+    colformat_double(j = 1, digits = 3) |>
+    colformat_double(j = 2, digits = 0) |>
+    # mk_par(j = 2, part = "header", value = as_paragraph(as_i("B"), as_sub("0"))) |>
+    align(align = "center", part = "all")
+```
+
+```{r}
+#| label: tbl-sim-examples
+#| tbl-cap: Example simulations for different recruitment forecasting methods
+
+data.frame(Method = c("Single-stratum", "Three-strata", "Ricker", "Beverton-Holt"),
+           "B_0" = c(median(na.omit(unique(B_one_strata$B))), 
+                     median(na.omit(unique(B_three_strata$B))),
+                     na.omit(unique(B_rick$AUB)), na.omit(unique(B_bevholt$AUB)))) |>
+    flextable(cwidth = c(1.5, 1)) |>
+    fontsize(size = 10) |>
+    colformat_double(j = 2, digits = 0) |>
+    mk_par(j = 2, part = "header", value = as_paragraph(as_i("B"), as_sub("0"))) |>
+    align(align = "center", part = "all")
+
+```
+
+```{r}
+#| label: tbl-nyear-yab
+#| tbl-cap: Table for appendix D
+#| 
+nyear_tab |>
+    flextable() |>
+    fontsize(size = 10) |>
+    colformat_double(digits = 2) |>
+    align(align = "center", part = "all")
+```
+
+# Figures
+
+```{r}
+#| label: fig-SSB-timeseries
+#| fig-width: 7
+#| fig-height: 3.5
+#| fig-cap: Biomass timeseries
+
+median_B0 <- round(median(quants))
+
+ggplot(data = sr_tab) + 
+  geom_line(aes(x = year, y = spawners*1.10231/10^3)) + 
+  geom_line(aes(x = year, y = threshold/10^3), color = "grey50") + 
+  xlab("Year") + ylab(bquote("Spawning Biomass (" ~ 10^3 ~ "short tons)")) +
+  geom_segment(aes(x = 1980, xend = 2022, y = median_B0/10^3, yend = median_B0/10^3), linetype = "dotted", linewidth = .05) +
+  geom_segment(aes(x = 1980, xend = 2022, y = 67036/10^3, yend = 67036/10^3), linetype = "dashed", linewidth = .05) +
+  annotate("text", x = 2013, y = 35000/10^3, label = bquote("Current Threshold:" ~ "25,000 short tons"), size = 3) +
+  annotate("text", x = 1993, y = (median_B0*2.2)/10^3, label = bquote("2023" ~ B[0] * ":" ~ .(format(median_B0, big.mark = ",")) ~ "short tons"), size = 3) +
+  geom_curve(aes(x = 1995, xend = 2000, y = (median_B0*2)/10^3, yend = (median_B0)/10^3), arrow = arrow(length = unit(0.03, "npc")), curvature = -0.2) +
+  annotate("text", x = 1988, y = (67036*2.2)/10^3, label = bquote("1998" ~ B[0] * ":" ~ "67,036 short tons"), size = 3) +
+  geom_curve(aes(x = 1990, xend = 1993, y = (67036*2)/10^3, yend = 67036/10^3), arrow = arrow(length = unit(0.03, "npc")), curvature = -0.2) +
+#   labs(title = "Spawning Biomass Estimates from SCAA 2023-Forecast", subtitle = "1980-2022") +
+  labs(title = NULL, subtitle = NULL) +
+  theme_CL() +
+  theme(axis.title.y = element_text(size = 12)) 
+```
+
+```{mermaid}
+%%| label: fig-simulation-flowchart
+%%| fig-width: 10
+%%| fig-height: 6
+%%| fig-cap: Simulation flowchart
+
+flowchart LR
+        A["<font size=5> Initialize <br> age-matrix <br> (appendix B)"] -->
+        B(("<font size=5> Calculate <br> spawning <br> biomass (B<sub>t</sub>)")) 
+        OBb(["<font size=5> Annual survival <br> fraction (S)"]) -.-> D
+        OB(["<font size=5> Recruitment (R<sub>y</sub>)"]) -.-> A
+        OBa(["<font size=5> Weight-at-age (W<sub>a</sub>) <br> Maturity (&rho;<sub>y</sub>)"]) -..-> B
+        B --> 
+        C["<font size=5> Simulate new <br> recruits (R<sub>t</sub>)"] --> D
+        OBb -.-> A
+        D(("<font size=5> Populate <br> age-matrix <br> (N<sub>t,a</sub>)")) -->
+        E((<font size=5> Stop 30,000 years <br> after cumulative <br> mean converges))
+        D --> B
+        %% E -- Repeat 1,000 times --> A
+        %% E --> F{"<font size=5>B<sub>0</sub>: <font size=5>median biomass <br> after convergence"}
+        classDef white fill:white,stroke:#333,stroke-width:4px
+        class A,B,C,D,E,F white
+        classDef grey fill:lightgrey,stroke:#333,stroke-width:4px,font-size:14pt
+        class OB,OBa,OBb grey
+```
+
+```{r}
+#| label: fig-strata
+#| fig-cap: Stratified stock-recruit parameter estimates
+
+sr_list <- split_sr(sr$recruits, sr$spawners*1.10231, strata)
+splits <- strata_boundaries(sr_list)
+
+sr$year[match(c(1982, 1984, 1986, 1988, 1994, 1995, 1999, 2000, 2006, 2017), sr$year)] <- NA
+
+ggplot(sr, aes(x = spawners*1.10231/1000, y = recruits)) +
+    geom_point(aes(shape = factor(strata))) + 
+    geom_vline(xintercept = splits/1000) +
+    # labs(title = "Spawner-recruit Estimates From SCAA 2023-Forecast", shape = "Strata") +
+    labs(title = NULL, subtitle = NULL, shape = "Strata") +
+    annotate("text", x = (splits[1]-2000)/1000, y = max(sr$recruits)-1000, angle = "90", size = 3,
+                label = bquote(l[1] ~ "" == "" ~ .(format(round(splits[1]), big.mark = ",")) ~ " short tons")) +
+    annotate("text", x = (splits[2]-2000)/1000, y = max(sr$recruits)-1000, angle = "90", size = 3,
+                label = bquote(l[2] ~ "" == "" ~ .(format(round(splits[2]), big.mark = ",")) ~ " short tons")) +
+    ylab(bquote("Age-3 Recruits (" * 10^6 * ")")) +
+    xlab(bquote("Spawning Biomass (" * B[y-3] * "," * 10^3 * " short tons)")) +
+    ggrepel::geom_text_repel(aes(label = substr(as.character(year), 
+                                                                start = 3, stop = 4)),
+                                            max.overlaps = 30, size = 2.75) +
+    theme_CL() +
+    scale_shape_manual(values = c(`1` = 1, `2` = 16, `3` = 4)) +
+    scale_y_continuous(labels = scales::comma) +
+    theme(legend.position = c(.8, .8),
+          legend.text = element_text(size = 8),
+          legend.key.height = unit(.4, "cm"),
+          legend.key.width = unit(.75, "cm")) 
+```
+
+```{r}
+#| label: fig-one-simulation
+#| fig-cap: An example of a single biomass simulation
+
+year_converges <- max(which(is.na(B_three_strata$AUB)))
+ggplot(data = B_three_strata[sort(sample(1:nrow(B_three_strata), 2000, replace = FALSE)),], aes(x = YEAR)) +
+    geom_line(aes(y = B/1000, color = "Simulated Biomass"), alpha = .5) +
+    geom_line(aes(y = B_cumavg/1000, color = "Cumulative Mean Series")) +
+    # annotate("text", x = 8050, y = 450, size = 4,
+    #          label = bquote("Median" ~ B[0] ~ ":" ~ .(format(round(median(na.omit(B_three_strata$B))), big.mark = ",")) ~ " tons")) + 
+    xlab("Simulation Year") + ylab(bquote("Spawning Biomass " ~ "(" * 10^3 ~ "short tons)")) +
+    # labs(title = "One Biomass Simulation") +
+    labs(title = NULL, subtitle = NULL) +
+    geom_vline(aes(xintercept = year_converges), linetype = "dotted") +
+    # annotate("text", x = 100, y =450, angle = "90", size = 3, label = bquote(t == .(year_converges))) +
+    theme_CL() +
+    scale_color_manual(values = c("Simulated Biomass" = "grey50", "Cumulative Mean Series" = "black")) +
+    scale_x_continuous(labels = scales::comma) +
+    theme(legend.position = c(.8,.8), 
+          legend.title = element_blank(),
+          legend.margin=margin(0,0,0,0),
+          legend.box.margin=margin(-10,-10,-10,-10),
+          axis.title.y = element_text(size = 12))
+cat("The cumulative mean series converges in simulation year ", year_converges)
+```
+
+
+```{r}
+#| label: fig-biomass-distribution
+#| fig-cap: Combined distribution of all biomass simulations
+
+combined_hist <- ggplot() +
+  geom_polygon(aes(x = c(quants[4], quants[6], quants[6], quants[4]),
+                   y = c(0, 0, .1, .1)),
+               fill = "grey50", alpha = .5) +
+  geom_polygon(aes(x = c(quants[3], quants[7], quants[7], quants[3]),
+                   y = c(0, 0, .1, .1)),
+              fill = "grey50", alpha = .25) +
+  geom_histogram(data = raw_results_post_convergence, aes(x = B, y = after_stat(count/sum(count))),
+                 binwidth = 5000, color = "black", fill = "white") +
+  geom_vline(aes(xintercept = quants[5]), linetype = "dotted") +  
+  xlab("Spawning Biomass (short tons)") +
+  ylab("Proportion of All Simulated Years (%)") +
+  labs(title = "Combined Distribution of All Biomass Simulations") +
+  annotate("text", x = 5e5, y = .055, size = 5,
+           label = bquote("Median" ~ B[0] * ":" ~  .(format(round(quants[5]), big.mark = ",")) ~ "short tons")) +
+  scale_x_continuous(label = scales::label_comma()) +
+  scale_y_continuous(label = scales::percent) +
+  theme_bw() 
+combined_hist
+```
+
+```{r}
+#| label: fig-onesim-distribution
+#| fig-cap: Biomass distribution for a single biomass simulations
+
+quants_onesim <- quantile(B_three_strata$B, probs = quant_probs)
+onesim_hist <- ggplot() +
+  geom_polygon(aes(x = c(quants_onesim[4], quants_onesim[6], quants_onesim[6], quants_onesim[4]),
+                   y = c(0, 0, .1, .1)),
+               fill = "grey50", alpha = .5) +
+  geom_polygon(aes(x = c(quants_onesim[3], quants_onesim[7], quants_onesim[7], quants_onesim[3]),
+                   y = c(0, 0, .1, .1)),
+              fill = "grey50", alpha = .25) +
+  geom_histogram(data = B_three_strata, aes(x = B, y = after_stat(count/sum(count))),
+                 binwidth = 5000, color = "black", fill = "white") +
+  geom_vline(aes(xintercept = quants_onesim[5]), linetype = "dotted") +  
+  xlab("Spawning Biomass (short tons)") +
+  ylab("Proportion of All Simulated Years (%)") +
+  labs(title = "Distribution of Simulated Biomass for One Simulation") +
+  annotate("text", x = 5e5, y = .055, size = 5,
+           label = bquote("Median" ~ B[0] * ":" ~  .(format(round(quants_onesim[5]), big.mark = ",")) ~ "short tons")) +
+  scale_x_continuous(label = scales::label_comma()) +
+  scale_y_continuous(label = scales::percent) +
+  theme_bw() 
+onesim_hist
+```
+
+
+```{r}
+#| label: fig-biomass-distribution-sens
+#| fig-cap: Sensitivity analysis
+
+quants_sens <- quantile(raw_results_post_convergence_sens$B, probs = quant_probs)
+combined_hist_sens <- ggplot() +
+  geom_polygon(aes(x = c(quants_sens[4], quants_sens[6], quants_sens[6], quants_sens[4]),
+                   y = c(0, 0, .1, .1)),
+               fill = "grey50", alpha = .5) +
+  geom_polygon(aes(x = c(quants_sens[3], quants_sens[7], quants_sens[7], quants_sens[3]),
+                   y = c(0, 0, .1, .1)),
+              fill = "grey50", alpha = .25) +
+  geom_histogram(data = raw_results_post_convergence_sens, aes(x = B, y = after_stat(count/sum(count))),
+                 binwidth = 5000, color = "black", fill = "white") +
+  geom_vline(aes(xintercept = quants_sens[5]), linetype = "dotted") +  
+  xlab("Spawning Biomass (short tons)") +
+  ylab("Proportion of All Simulated Years (%)") +
+  labs(title = "Combined Distribution of All Biomass Simulations", subtitle = "Sensitivity Analysis") +
+  annotate("text", x = 2e5, y = .055, size = 5,
+           label = bquote(atop("Median" ~ B[0] * ":", 
+                               .(format(round(quants_sens[5]), big.mark = ",")) ~ "short tons"))) +
+  scale_x_continuous(label = scales::label_comma()) +
+  scale_y_continuous(label = scales::percent) +
+  theme_bw() 
+combined_hist_sens
+```
+
+
+# Appendix B
+
+![](../../recruitment_comparisons/plots/flowchart.png)
+
+|         |  MPE  | MAPE |  Min  |  Max  |
+|:--------|:-----:|:----:|:-----:|:-----:|
+|Intercept-only Model | -29.1 | 32.0 | -76.6 | 21.7  |
+|Beverton-Holt | 12.8  | 36.4 | -71.5 | 89.1  |
+|Ricker | 61.3  | 78.7 | -71.5 | 308.7 |
+|Ricker (SST) | 16.5  | 41.1 | -72.3 | 118.2 |
+|Ricker (PDO) | 67.7  | 82.2 | -69.5 | 329.5 |
+|Single-stratum Sampling |  3.1  | 26.6 | -62.1 | 51.8  |
+|Three-stratum Sampling |  0.7  | 23.1 | -60.0 | 52.9  |
+|Time-tapered Sampling | 12.4  | 32.7 | -60.7 | 68.6  |
+|Simplex | 42.5  | 56.9 | -61.0 | 149.5 |

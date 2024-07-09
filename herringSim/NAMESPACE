@@ -1,0 +1,6 @@
+exportPattern("^[[:alpha:]]+")
+import("stats")
+import("stats4")
+import("ggplot2")
+importFrom("Rdpack","insert_ref")
+importFrom("utils", "data")
