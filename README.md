@@ -24,39 +24,32 @@ stock assessment model may facilitate other estimation procedures.
 
 This folder contains the R code performing a simulation that estimates Sitka Sound
 unfished biomass. The scripts in the directory rely heavily on functions in the 
-package `herringSim`. See a full writeup of methodology and results in **final paper 
-goes here**
+package `herringSim`. See a full writeup of methodology and results in *Roberts, Miller, and Dressel (2024)*
 
 ### `herringSim`
 
 Data and R functions used throughout this repository, as well as relevant code 
 documentation, reside in the `herringSim` R package. Once you have cloned the
-repository, you can install the package by running `install.packages("herringSim_0.2.0.tar.gz")`
-in an R console. Make sure your working directory is at the root of the repo.
-
-<!-- 0. Obtain a personal access token (PAT) from repository owner
-1. Open R console
-2. Execute `devtools::install_github("commfish-private/sitka-herring-unfished-biomass/herringSim", auth_token = "YOUR_PAT_HERE")` 
-PAT: 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-->
+repository, you can install the package by running `R CMD INSTALL herringSim_0.2.0.tar.gz`
+in a `cmd` or `bash` shell. Make sure your working directory is at the root of the repo.
 
 
 ### `recruitment_comparisons`
 
 This project attempts to identify a method to simulate recruitment in the Sitka Sound
 herring unfished biomass simulations performed in `estimate_B0`. See appendix d
-of **final paper goes here** for a writeup of this analysis.
+of *Roberts, Miller, and Dressel (2024)* for a writeup of this analysis.
 
 
 ## To run Sitka Sound unfished biomass calculation
 
 0. Obtain all software dependencies 
 1. Clone `sitka-sound-unfished-biomass` repository
-2. Install herringSim. Verify that you can attach its contents like any other R package
-3. Execute the R script `estimate_B0/r-code/estimate_B0.r`
-4. Wait 8 hours
-5. View results by opening `estimate_B0/plots/combined_histogram.png`
+2. Install `herringSim`. Verify that you can attach its contents like any other R package
+3. Execute the R script `estimate_B0/r-code/estimate_B0.r`. Runtime approximately 8 hours.
+4. View results by opening `estimate_B0/plots/combined_histogram.png`
 
-It is recommended to read **final paper goes here** for a full understanding of the
+It is recommended to read *Roberts, Miller, and Dressel (2024)* for a full understanding of the
 methods in this simulation. See the `herringSim` functions `B_sim_init()` and 
 `B_sim_empirical()` for more details on the implementation of the methods.
 
@@ -102,4 +95,4 @@ addition, you will need Quarto 1.4 to render `.qmd` files.
 
 ## References
 
-**Add references to readme**
+Roberts, C. L., S. E. Miller, and S. C. Dressel. 2024. A simulation study to estimate the unfished biomass of Sitka Sound Pacific herring. Alaska Department of Fish and Game, Division of Commercial Fisheries, Regional Information Report No. 1J24-01, Juneau.
